@@ -166,6 +166,20 @@ def get_driver_colors(session):
     return rgb_colors
 
 
+def get_driver_team_names(session):
+    """Return a dict mapping driver abbreviation to team/constructor name."""
+    team_names = {}
+    for num in session.drivers:
+        try:
+            driver = session.get_driver(num)
+            code = driver["Abbreviation"]
+            team = driver.get("TeamName", "")
+            team_names[code] = team
+        except Exception:
+            pass
+    return team_names
+
+
 def get_circuit_rotation(session):
     circuit = session.get_circuit_info()
     return circuit.rotation
