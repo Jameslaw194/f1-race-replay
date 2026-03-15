@@ -2,7 +2,7 @@ import os
 import arcade
 import numpy as np
 from scipy.spatial import cKDTree
-from src.f1_data import FPS
+from src.f1_data import FPS, get_driver_team_names
 from src.ui_components import (
     LeaderboardComponent, 
     WeatherComponent, 
@@ -80,6 +80,12 @@ class F1RaceReplayWindow(arcade.Window):
 
         self.controls_popup_comp.set_size(340, 250) # width/height of the popup box
         self.controls_popup_comp.set_font_sizes(header_font_size=16, body_font_size=13) # adjust font sizes
+        self.driver_teams = {}
+        if session is not None:
+            try:
+                self.driver_teams = get_driver_team_names(session)
+            except Exception as e:
+                print(f"Could not load driver team names: {e}")
         self.degradation_integrator = None
         if session is not None:
             try:
@@ -265,6 +271,7 @@ class F1RaceReplayWindow(arcade.Window):
             "is_paused": self.paused,
             "total_frames": self.n_frames,
             "circuit_length_m": self.circuit_length_m,
+            "driver_teams": self.driver_teams,
             "session_data": {
                 "time": time_str,
                 "lap": leader_lap,

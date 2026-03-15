@@ -28,6 +28,7 @@ class TelemetryStreamViewer(QMainWindow):
         self.message_count = 0
         self.last_frame_index = -1
         self.drivers_seen = set()
+        self.driver_teams = {}  # maps driver code -> team/constructor name
         
         # Setup UI
         self.setup_ui()
@@ -132,6 +133,10 @@ class TelemetryStreamViewer(QMainWindow):
         """Handle incoming telemetry data."""
         self.message_count += 1
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+        # Cache driver team names when first received
+        if 'driver_teams' in data and data['driver_teams']:
+            self.driver_teams.update(data['driver_teams'])
         
         # Update raw log
         json_str = json.dumps(data, indent=2)
@@ -202,8 +207,10 @@ class TelemetryStreamViewer(QMainWindow):
         
         for code, driver_data in drivers_data.items():
             self.drivers_seen.add(code)
-            
-            line = f"{code}: "
+
+            team = self.driver_teams.get(code, "")
+            header = f"{code} ({team})" if team else code
+            line = f"{header}: "
             if 'x' in driver_data and 'y' in driver_data:
                 line += f"Pos({driver_data['x']:.1f}, {driver_data['y']:.1f}) "
             if 'speed' in driver_data:
