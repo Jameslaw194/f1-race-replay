@@ -209,8 +209,8 @@ class TelemetryStreamViewer(QMainWindow):
             self.drivers_seen.add(code)
 
             team = self.driver_teams.get(code, "")
-            header = f"{code} ({team})" if team else code
-            line = f"{header}: "
+            driver_label = f"{code} ({team})" if team else code
+            line = f"{driver_label}: "
             if 'x' in driver_data and 'y' in driver_data:
                 line += f"Pos({driver_data['x']:.1f}, {driver_data['y']:.1f}) "
             if 'speed' in driver_data:

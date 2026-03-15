@@ -250,7 +250,7 @@ class LeaderboardComponent(BaseComponent):
         self.entries = []  # list of tuples (code, color, pos, progress_m)
         self.rects = []    # clickable rects per entry
         self.selected = []  # Changed to list for multiple selection
-        self.row_height = 25
+        self.row_height = 34
         self.show_gaps = False
         self.show_neighbor_gaps = False
         self.gap_toggle_rect = None
@@ -382,6 +382,8 @@ class LeaderboardComponent(BaseComponent):
         else:
             new_entries = self.entries
 
+        driver_teams = getattr(window, 'driver_teams', {})
+
         for i, (code, color, pos, progress_m) in enumerate(new_entries):
             current_pos = i + 1
             top_y = leaderboard_y - 30 - ((current_pos - 1) * self.row_height)
@@ -398,6 +400,13 @@ class LeaderboardComponent(BaseComponent):
                 text_color = color
             text = f"{current_pos}. {code}" if pos.get("rel_dist",0) != 1 else f"{current_pos}. {code}   OUT"
             arcade.Text(text, left_x, top_y, text_color, 16, anchor_x="left", anchor_y="top").draw()
+
+            # Team name sub-line
+            team_name = driver_teams.get(code, "")
+            if team_name:
+                sub_color = (170, 170, 170) if code not in self.selected else (80, 80, 80)
+                arcade.Text(team_name, left_x, top_y - 17, sub_color, 9,
+                            anchor_x="left", anchor_y="top").draw()
 
             # Gap display (if enabled)
             if getattr(self, "show_neighbor_gaps", False):
@@ -853,7 +862,9 @@ class DriverInfoComponent(BaseComponent):
         header_height = 30
         header_cy = top - (header_height / 2)
         arcade.draw_rect_filled(arcade.XYWH(center_x, header_cy, box_width, header_height), team_color)
-        arcade.Text(f"Driver: {code}", left + 10, header_cy, arcade.color.BLACK, 14, anchor_y="center",
+        team_name = getattr(window, 'driver_teams', {}).get(code, "")
+        header_label = f"{code}  {team_name}" if team_name else f"Driver: {code}"
+        arcade.Text(header_label, left + 10, header_cy, arcade.color.BLACK, 13, anchor_y="center",
                     bold=True).draw()
 
         cursor_y, row_gap = top - header_height - 25, 25
