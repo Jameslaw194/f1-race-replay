@@ -7,7 +7,7 @@ from src.gui.race_selection import RaceSelectionWindow
 from PySide6.QtWidgets import QApplication
 from src.lib.season import get_season
 
-def main(year=None, round_number=None, playback_speed=1, session_type='R', visible_hud=True, ready_file=None, show_telemetry_viewer=True):
+def main(year=None, round_number=None, playback_speed=1, session_type='R', visible_hud=True, ready_file=None, show_telemetry_viewer=True, start_paused=False, sync_file=None):
   print(f"Loading F1 {year} Round {round_number} Session '{session_type}'")
   session = load_session(year, round_number, session_type)
 
@@ -104,7 +104,9 @@ def main(year=None, round_number=None, playback_speed=1, session_type='R', visib
       ready_file=ready_file,
       session_info=session_info,
       session=session,
-      enable_telemetry=True # This is now permanently enabled to support the telemetry insights menu if the user decides to use it
+      enable_telemetry=True, # This is now permanently enabled to support the telemetry insights menu if the user decides to use it
+      start_paused=start_paused,
+      sync_file=sync_file,
     )
 
 if __name__ == "__main__":
@@ -149,7 +151,15 @@ if __name__ == "__main__":
       if idx < len(sys.argv):
         ready_file = sys.argv[idx]
 
-    main(year, round_number, playback_speed, session_type=session_type, visible_hud=visible_hud, ready_file=ready_file)
+    # BeamNG sync: start paused and wait for a sync-file to unpause
+    start_paused = "--start-paused" in sys.argv
+    sync_file = None
+    if "--sync-file" in sys.argv:
+      idx = sys.argv.index("--sync-file") + 1
+      if idx < len(sys.argv):
+        sync_file = sys.argv[idx]
+
+    main(year, round_number, playback_speed, session_type=session_type, visible_hud=visible_hud, ready_file=ready_file, start_paused=start_paused, sync_file=sync_file)
     sys.exit(0)
 
   # Run the GUI

@@ -43,6 +43,8 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
+import uuid
 
 
 def _parse_args():
@@ -98,11 +100,13 @@ def _parse_args():
     return parser.parse_args()
 
 
-def _launch_map_replay(year: int, round_number: int) -> subprocess.Popen:
+def _launch_map_replay(year: int, round_number: int, sync_file: str) -> subprocess.Popen:
     """Launch the normal F1 race map + insights menu in a separate process.
 
     Delegates to ``main.py --viewer`` with the same year/round so the full
-    2-D visualisation starts alongside the BeamNG replay.  Returns the
+    2-D visualisation starts alongside the BeamNG replay.  The map is held
+    paused at frame 0 until the sync file is written (just before the BeamNG
+    AI script starts), ensuring both views play in lock-step.  Returns the
     ``Popen`` handle; the process is deliberately left detached.
     """
     main_path = os.path.normpath(
@@ -114,10 +118,13 @@ def _launch_map_replay(year: int, round_number: int) -> subprocess.Popen:
         "--viewer",
         "--year", str(year),
         "--round", str(round_number),
+        "--start-paused",
+        "--sync-file", sync_file,
     ]
     print(
         f"Launching F1 race map (year={year}, round={round_number}) …\n"
         f"  Command: {' '.join(cmd)}\n"
+        f"  Sync file: {sync_file}\n"
     )
     try:
         proc = subprocess.Popen(cmd)
@@ -163,10 +170,14 @@ def main():
         )
         sys.exit(1)
 
-    # 1. Optionally launch the normal F1 race map + telemetry insights menu
+    # 1. Optionally launch the normal F1 race map + telemetry insights menu.
+    #    The map is held paused at frame 0 until BeamNG is ready to start.
+    sync_file = os.path.join(
+        tempfile.gettempdir(), f"f1_beamng_sync_{uuid.uuid4().hex}"
+    )
     map_proc = None
     if not args.no_map:
-        map_proc = _launch_map_replay(args.year, args.round)
+        map_proc = _launch_map_replay(args.year, args.round, sync_file)
     else:
         print("--no-map specified — skipping 2-D race map launch.\n")
 
@@ -177,12 +188,13 @@ def main():
         cache_path=args.cache,
     )
 
-    # 3. Run BeamNG replay
+    # 3. Run BeamNG replay (passes sync_file so it is written just before the
+    #    AI script is submitted, triggering the map to start in sync)
     replay = BeamNGF1Replay(
         beamng_home=args.beamng_home,
         beamng_port=args.port,
     )
-    replay.run(telemetry)
+    replay.run(telemetry, sync_file=sync_file if not args.no_map else None)
 
     # 4. If the map window is still open when BeamNG finishes, leave it
     #    running — the user can close it manually.

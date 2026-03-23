@@ -427,12 +427,22 @@ class BeamNGF1Replay:
     # Public interface
     # ------------------------------------------------------------------
 
-    def run(self, telemetry: dict) -> None:
+    def run(self, telemetry: dict, sync_file: "str | None" = None) -> None:
         """Replay *telemetry* in BeamNG from start to finish.
 
         Submits the full telemetry path to BeamNG's AI script system once.
         BeamNG then drives the car smoothly along the path at the correct
         speed for each segment — no teleporting, no jerky jumps.
+
+        Parameters
+        ----------
+        telemetry:
+            Dict returned by :func:`load_driver_telemetry`.
+        sync_file:
+            Optional path to a file that should be created just before the
+            AI script is submitted.  The companion 2-D map process watches
+            for this file and unpauses itself the moment it appears, keeping
+            both visualisations in lock-step from t=0.
 
         Press **Ctrl-C** at any time to stop early.
         """
@@ -510,7 +520,17 @@ class BeamNGF1Replay:
             log.info("AI script ready: %d waypoints spanning %.1f s.", len(script), script[-1]["t"])
 
             # Submit the script to BeamNG's AI — the car now drives itself
-            # smoothly along the recorded F1 path
+            # smoothly along the recorded F1 path.
+            # Write the sync file FIRST so the 2-D map process unpauses at
+            # exactly the same moment the BeamNG car begins to move.
+            if sync_file:
+                try:
+                    with open(sync_file, "w") as _sf:
+                        _sf.write("sync")
+                    log.info("Sync file written → map replay will now start: %s", sync_file)
+                except Exception as _sf_exc:
+                    log.warning("Could not write sync file %s: %s", sync_file, _sf_exc)
+
             log.info("Submitting AI script to vehicle '%s' (cling=True) …", BEAMNG_CAR_MODEL)
             print(f"Submitting script to BeamNG AI — the car will drive the route.")
             self.vehicle.ai.set_script(script, cling=True)

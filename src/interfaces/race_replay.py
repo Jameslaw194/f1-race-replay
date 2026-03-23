@@ -29,7 +29,8 @@ class F1RaceReplayWindow(arcade.Window):
     def __init__(self, frames, track_statuses, example_lap, drivers, title,
                  playback_speed=1.0, driver_colors=None, circuit_rotation=0.0,
                  left_ui_margin=340, right_ui_margin=260, total_laps=None, visible_hud=True,
-                 session_info=None, session=None, enable_telemetry=False):
+                 session_info=None, session=None, enable_telemetry=False,
+                 start_paused=False, sync_file=None):
         # Set resizable to True so the user can adjust mid-sim
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, title, resizable=True)
         self.maximize()
@@ -55,7 +56,10 @@ class F1RaceReplayWindow(arcade.Window):
         self.playback_speed = PLAYBACK_SPEEDS[PLAYBACK_SPEEDS.index(playback_speed)] if playback_speed in PLAYBACK_SPEEDS else 1.0
         self.driver_colors = driver_colors or {}
         self.frame_index = 0.0  # use float for fractional-frame accumulation
-        self.paused = False
+        # start_paused=True holds the replay at frame 0 until a BeamNG sync file appears
+        self.paused = start_paused
+        # Path to the BeamNG sync file; when it appears the replay auto-unpauses
+        self._sync_file = sync_file
         self.total_laps = total_laps
         self.has_weather = any("weather" in frame for frame in frames) if frames else False
         self.visible_hud = visible_hud # If it displays HUD or not (leaderboard, controls, weather, etc)
@@ -629,6 +633,18 @@ class F1RaceReplayWindow(arcade.Window):
         self.progress_bar_comp.draw_overlays(self)
                     
     def on_update(self, delta_time: float):
+        # BeamNG sync: if we are waiting for a sync signal, check for the file
+        if self._sync_file is not None and self.paused:
+            try:
+                if os.path.exists(self._sync_file):
+                    os.remove(self._sync_file)
+                    self.paused = False
+                    self._sync_file = None  # no longer needed
+                    print("BeamNG sync signal received — starting replay.")
+                    self._broadcast_telemetry_state()
+            except Exception:
+                pass
+
         self.race_controls_comp.on_update(delta_time)
         
         seek_speed = 3.0 * max(1.0, self.playback_speed) # Multiplier for seeking speed, scales with current playback speed
