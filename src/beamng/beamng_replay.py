@@ -1,10 +1,9 @@
 """BeamNG integration for F1 telemetry replay.
 
 Replays George Russell's (Mercedes) F1 race telemetry data inside BeamNG Drive
-on a blank ``gridmap_v2`` test map.  The car is teleported to the correct
-world-space position every frame and its control inputs (throttle, brake, gear)
-are applied so the in-game representation tracks the real onboard data as
-closely as possible.
+on the ``smallgrid`` test map.  The entire telemetry path is submitted to
+BeamNG's built-in AI script system in one shot so the car *drives* smoothly
+from point to point rather than being teleported every frame.
 
 Dependencies
 ------------
@@ -48,9 +47,8 @@ TEAM_NAME = "Mercedes"
 CAR_NUMBER = 63
 
 # BeamNG scene
-BEAMNG_MAP = "gridmap_v2"      # Blank, flat test environment
-BEAMNG_CAR_MODEL = "etk800"    # Closest vanilla Mercedes-style car in BeamNG
-BEAMNG_CAR_COLOR = "Silver"    # Traditional Mercedes livery colour
+BEAMNG_MAP = "smallgrid"       # Blank, flat test environment
+BEAMNG_CAR_MODEL = "FR26"      # F1-style car available in BeamNG
 
 # Replay timing
 REPLAY_FPS = 25                # Replay frame rate (matches the telemetry sampling rate)
@@ -223,6 +221,12 @@ def load_driver_telemetry(
 class BeamNGF1Replay:
     """Drives a BeamNG vehicle along George Russell's F1 telemetry path.
 
+    The entire telemetry path is submitted to BeamNG's AI script system so
+    the car physically drives from waypoint to waypoint rather than being
+    teleported frame-by-frame.  BeamNG's physics engine handles steering,
+    acceleration, and braking to follow the path at the recorded speeds,
+    giving a smooth, natural-looking replay.
+
     Usage
     -----
     ::
@@ -259,7 +263,7 @@ class BeamNGF1Replay:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_scenario(self, start_x: float, start_y: float) -> None:
+    def _build_scenario(self, start_x: float, start_y: float, start_heading: float) -> None:
         """Create the blank-map scenario and spawn the vehicle."""
         scenario = Scenario(
             BEAMNG_MAP,
@@ -272,13 +276,13 @@ class BeamNGF1Replay:
         self.vehicle = Vehicle(
             "george_russell",
             model=BEAMNG_CAR_MODEL,
-            color=BEAMNG_CAR_COLOR,
         )
 
+        rot_quat = _heading_to_quat(start_heading)
         scenario.add_vehicle(
             self.vehicle,
             pos=(start_x, start_y, GROUND_Z),
-            rot_quat=(0.0, 0.0, 0.0, 1.0),
+            rot_quat=rot_quat,
         )
 
         scenario.make(self.bng)
@@ -291,14 +295,27 @@ class BeamNGF1Replay:
             self.bng.load_scenario(scenario)
             self.bng.start_scenario()
 
-        print("Scenario loaded on gridmap_v2.  Starting replay …\n")
+        print(f"Scenario loaded on {BEAMNG_MAP}.  Starting replay …\n")
 
-    def _disable_ai(self) -> None:
-        """Turn off the vehicle's AI so manual inputs take effect."""
-        try:
-            self.vehicle.ai.set_mode("disabled")
-        except Exception:
-            pass  # Older BeamNGpy versions don't expose ai.set_mode
+    def _build_ai_script(self, t_arr, x_arr, y_arr) -> list:
+        """Convert telemetry arrays to a BeamNG AI waypoint script.
+
+        Each entry contains the world-space position and the elapsed time
+        (in seconds from the start of the replay).  BeamNG's AI will
+        drive the car through each waypoint at the speed implied by the
+        time delta between consecutive entries, producing smooth, natural
+        vehicle movement with no teleporting.
+        """
+        t0 = float(t_arr[0])
+        return [
+            {
+                "x": float(x_arr[i]),
+                "y": float(y_arr[i]),
+                "z": GROUND_Z,
+                "t": float(t_arr[i]) - t0,
+            }
+            for i in range(len(t_arr))
+        ]
 
     # ------------------------------------------------------------------
     # Public interface
@@ -307,29 +324,28 @@ class BeamNGF1Replay:
     def run(self, telemetry: dict) -> None:
         """Replay *telemetry* in BeamNG from start to finish.
 
-        Iterates over every sample in the telemetry dict, teleports the
-        car to the correct (x, y, z) position, sets the heading from the
-        direction of travel, and applies throttle / brake / gear inputs.
+        Submits the full telemetry path to BeamNG's AI script system once.
+        BeamNG then drives the car smoothly along the path at the correct
+        speed for each segment — no teleporting, no jerky jumps.
 
         Press **Ctrl-C** at any time to stop early.
         """
         t = telemetry["t"]
         x = telemetry["x"]
         y = telemetry["y"]
-        speed = telemetry["speed"]
-        gear = telemetry["gear"]
-        throttle = telemetry["throttle"]
-        brake = telemetry["brake"]
         n = len(t)
 
         event_name = telemetry.get("event_name", "Unknown Event")
+        duration = float(t[-1]) - float(t[0])
+
         print(
             f"=== BeamNG F1 Telemetry Replay ===\n"
             f"Driver : {DRIVER_NAME} ({DRIVER_CODE})  #{CAR_NUMBER}\n"
             f"Team   : {TEAM_NAME}\n"
             f"Event  : {event_name}\n"
-            f"Frames : {n:,} at {REPLAY_FPS} FPS "
-            f"({(t[-1] - t[0]) / 60:.1f} min)\n"
+            f"Map    : {BEAMNG_MAP}\n"
+            f"Car    : {BEAMNG_CAR_MODEL}\n"
+            f"Frames : {n:,} waypoints  ({duration / 60:.1f} min)\n"
         )
 
         print(
@@ -348,90 +364,51 @@ class BeamNGF1Replay:
         self.bng.open(launch=launch)
 
         try:
-            self._build_scenario(float(x[0]), float(y[0]))
-            self._disable_ai()
+            # Compute initial heading from the first two telemetry points
+            if n > 1:
+                start_heading = _heading_from_delta(
+                    float(x[1]) - float(x[0]),
+                    float(y[1]) - float(y[0]),
+                ) or 0.0
+            else:
+                start_heading = 0.0
+
+            self._build_scenario(float(x[0]), float(y[0]), start_heading)
 
             # Give BeamNG physics a moment to settle after spawning
             time.sleep(2.0)
 
-            heading = 0.0          # running heading (radians)
-            progress_interval = REPLAY_FPS * 10  # print every ~10 s
+            # Build the AI waypoint script from the full telemetry path
+            print(f"Building AI waypoint script from {n:,} telemetry samples …")
+            script = self._build_ai_script(t, x, y)
 
+            # Submit the script to BeamNG's AI — the car now drives itself
+            # smoothly along the recorded F1 path
+            print(f"Submitting script to BeamNG AI — the car will drive the route.")
+            self.vehicle.ai.set_script(script, cling=True)
+
+            # Wait for the replay to finish, printing live progress
             print(
-                f"Replay running — press Ctrl-C to stop.\n"
-                f"{'Time':>8}  {'Speed':>10}  {'Gear':>5}  "
-                f"{'Throttle':>10}  {'Pos (x, y)':>22}"
+                f"\nReplay running — press Ctrl-C to stop.\n"
+                f"Total duration: {duration:.0f} s ({duration / 60:.1f} min)\n"
             )
-            print("-" * 65)
 
-            for i in range(n):
-                frame_start = time.monotonic()
-
-                pos_x = float(x[i])
-                pos_y = float(y[i])
-
-                # ---- heading from neighbouring samples -------------------
-                if i + 1 < n:
-                    h = _heading_from_delta(
-                        float(x[i + 1]) - pos_x,
-                        float(y[i + 1]) - pos_y,
-                    )
-                elif i > 0:
-                    h = _heading_from_delta(
-                        pos_x - float(x[i - 1]),
-                        pos_y - float(y[i - 1]),
-                    )
-                else:
-                    h = None
-
-                if h is not None:
-                    heading = h
-
-                rot_quat = _heading_to_quat(heading)
-
-                # ---- teleport to F1 position ----------------------------
-                self.vehicle.teleport(
-                    pos=(pos_x, pos_y, GROUND_Z),
-                    rot_quat=rot_quat,
-                    reset=False,
+            start_wall = time.monotonic()
+            while True:
+                elapsed = time.monotonic() - start_wall
+                if elapsed >= duration:
+                    break
+                pct = min(elapsed / duration * 100.0, 100.0)
+                remaining = max(duration - elapsed, 0.0)
+                print(
+                    f"\r  Elapsed {elapsed:>6.0f} s / {duration:.0f} s  "
+                    f"({pct:>5.1f} %)  remaining {remaining:>5.0f} s",
+                    end="",
+                    flush=True,
                 )
+                time.sleep(1.0)
 
-                # ---- apply control inputs --------------------------------
-                # Throttle in FastF1 is 0–100 %; BeamNG expects 0.0–1.0
-                bng_throttle = float(np.clip(throttle[i] / 100.0, 0.0, 1.0))
-                # Brake in FastF1 can be a boolean (0/1) or a percentage (0–100).
-                # Normalise to [0, 1] for BeamNG by dividing if >1.
-                raw_brake = float(brake[i])
-                bng_brake = float(np.clip(raw_brake / 100.0 if raw_brake > 1.0 else raw_brake, 0.0, 1.0))
-                # Gear: F1 uses 1–8; neutral/negative values default to 1
-                bng_gear = max(1, int(round(float(gear[i]))))
-
-                self.vehicle.control(
-                    throttle=bng_throttle,
-                    brake=bng_brake,
-                    steering=0.0,
-                    parkingbrake=0.0,
-                    gear=bng_gear,
-                )
-
-                # ---- progress log every ~10 s ---------------------------
-                if i % progress_interval == 0:
-                    elapsed = t[i] - t[0]
-                    print(
-                        f"{elapsed:>7.1f}s  "
-                        f"{float(speed[i]):>8.1f} km/h  "
-                        f"{bng_gear:>5d}  "
-                        f"{bng_throttle * 100:>8.1f} %  "
-                        f"({pos_x:>8.1f}, {pos_y:>8.1f})"
-                    )
-
-                # ---- maintain replay cadence ----------------------------
-                elapsed_wall = time.monotonic() - frame_start
-                sleep_for = FRAME_DT - elapsed_wall
-                if sleep_for > 0:
-                    time.sleep(sleep_for)
-
-            print("\nReplay finished.")
+            print("\n\nReplay finished.")
 
         except KeyboardInterrupt:
             print("\nReplay stopped by user (Ctrl-C).")
@@ -441,3 +418,4 @@ class BeamNGF1Replay:
                     self.bng.close()
                 except Exception:
                     pass
+

@@ -2,7 +2,7 @@
 """BeamNG F1 Telemetry Replay – entry point.
 
 Loads George Russell's (Mercedes, #63) race telemetry via FastF1 and
-replays it inside BeamNG Drive on the blank ``gridmap_v2`` test map.
+replays it inside BeamNG Drive on the blank ``smallgrid`` test map.
 The in-game car follows the real position, speed, gear, throttle and
 brake data from the chosen race weekend.
 
@@ -42,7 +42,7 @@ def _parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Replay George Russell's F1 telemetry in BeamNG Drive on a "
-            "blank map (gridmap_v2)."
+            "blank map (smallgrid)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
