@@ -3,8 +3,12 @@
 
 Loads George Russell's (Mercedes, #63) race telemetry via FastF1 and
 replays it inside BeamNG Drive on the blank ``smallgrid`` test map.
-The in-game car follows the real position, speed, gear, throttle and
-brake data from the chosen race weekend.
+The in-game car follows the real position and speed data from the chosen
+race weekend.
+
+At the same time, the normal F1 Race Replay map and telemetry / insights
+menu are launched in a background process so you can watch the replay
+from both perspectives simultaneously.  Pass ``--no-map`` to skip that.
 
 Requirements
 ------------
@@ -20,8 +24,8 @@ Usage examples
 # Auto-launch BeamNG (provide the install directory):
     python run_beamng.py --year 2023 --round 1 --beamng-home "C:/BeamNG.drive"
 
-# Different port:
-    python run_beamng.py --year 2023 --round 5 --port 64257
+# Skip the 2-D map window:
+    python run_beamng.py --year 2023 --round 1 --no-map
 
 Arguments
 ---------
@@ -32,9 +36,12 @@ Arguments
                 BeamNG is already running.
 --port          TCP port BeamNG listens on (default: 64256)
 --cache         FastF1 cache directory (default: fastf1_cache)
+--no-map        Do not open the 2-D race map / telemetry window
 """
 
 import argparse
+import os
+import subprocess
 import sys
 
 
@@ -42,7 +49,8 @@ def _parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Replay George Russell's F1 telemetry in BeamNG Drive on a "
-            "blank map (smallgrid)."
+            "blank map (smallgrid), with the normal 2-D race map and "
+            "insights menu opening alongside."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -81,7 +89,47 @@ def _parse_args():
         metavar="DIR",
         help="FastF1 cache directory (default: fastf1_cache)",
     )
+    parser.add_argument(
+        "--no-map",
+        action="store_true",
+        default=False,
+        help="Skip launching the 2-D race map / telemetry window",
+    )
     return parser.parse_args()
+
+
+def _launch_map_replay(year: int, round_number: int) -> subprocess.Popen:
+    """Launch the normal F1 race map + insights menu in a separate process.
+
+    Delegates to ``main.py --viewer`` with the same year/round so the full
+    2-D visualisation starts alongside the BeamNG replay.  Returns the
+    ``Popen`` handle; the process is deliberately left detached.
+    """
+    main_path = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "main.py")
+    )
+    cmd = [
+        sys.executable,
+        main_path,
+        "--viewer",
+        "--year", str(year),
+        "--round", str(round_number),
+    ]
+    print(
+        f"Launching F1 race map (year={year}, round={round_number}) …\n"
+        f"  Command: {' '.join(cmd)}\n"
+    )
+    try:
+        proc = subprocess.Popen(cmd)
+        print(f"F1 race map process started (PID {proc.pid}).\n")
+        return proc
+    except Exception as exc:
+        print(
+            f"Warning: could not launch F1 race map: {exc}\n"
+            "  The BeamNG replay will still continue.\n",
+            file=sys.stderr,
+        )
+        return None
 
 
 def main():
@@ -115,19 +163,34 @@ def main():
         )
         sys.exit(1)
 
-    # 1. Load telemetry
+    # 1. Optionally launch the normal F1 race map + telemetry insights menu
+    map_proc = None
+    if not args.no_map:
+        map_proc = _launch_map_replay(args.year, args.round)
+    else:
+        print("--no-map specified — skipping 2-D race map launch.\n")
+
+    # 2. Load telemetry
     telemetry = load_driver_telemetry(
         year=args.year,
         round_number=args.round,
         cache_path=args.cache,
     )
 
-    # 2. Run BeamNG replay
+    # 3. Run BeamNG replay
     replay = BeamNGF1Replay(
         beamng_home=args.beamng_home,
         beamng_port=args.port,
     )
     replay.run(telemetry)
+
+    # 4. If the map window is still open when BeamNG finishes, leave it
+    #    running — the user can close it manually.
+    if map_proc is not None and map_proc.poll() is None:
+        print(
+            "\nBeamNG replay finished.  The F1 race map window is still open.\n"
+            "Close it manually when you are done."
+        )
 
 
 if __name__ == "__main__":
