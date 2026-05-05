@@ -376,9 +376,12 @@ class F1RaceReplayWindow(arcade.Window):
                     if pd.notna(tyre_life):
                         t_life = int(tyre_life)
                         
-                    is_pit = False
+                    is_pit_entry = False
                     if "PitInTime" in session.laps.columns and pd.notna(row.get("PitInTime")):
-                        is_pit = True
+                        is_pit_entry = True
+                    is_out_lap = False
+                    if "PitOutTime" in session.laps.columns and pd.notna(row.get("PitOutTime")):
+                        is_out_lap = True
                         
                     result.setdefault(code, []).append({
                         "lap": int(lap_num),
@@ -387,7 +390,9 @@ class F1RaceReplayWindow(arcade.Window):
                         "line_time_s": float(line_end_s) if line_end_s is not None else None,
                         "tyre": tyre_int,
                         "tyre_life": t_life,
-                        "is_pit": is_pit,
+                        "is_pit_entry": is_pit_entry,
+                        "is_pit_affected": is_pit_entry,
+                        "is_out_lap": is_out_lap,
                     })
                 if result:
                     fallback_by_code = {
@@ -410,9 +415,10 @@ class F1RaceReplayWindow(arcade.Window):
                                     entry["line_time_s"] = fb_entry["end_time_s"]
                                 if fb_entry.get("start_time_s") is not None:
                                     entry["start_time_s"] = fb_entry["start_time_s"]
-                            if fb_entry.get("is_pit") and not entry.get("is_pit"):
-                                entry["is_pit"] = True
-                                entry["pit_confidence"] = fb_entry.get("pit_confidence", "medium")
+                            if (fb_entry.get("is_pit_affected") or fb_entry.get("is_pit")) and not entry.get("is_pit_affected"):
+                                entry["is_pit_affected"] = True
+                                if not entry.get("pit_confidence") or entry.get("pit_confidence") == "none":
+                                    entry["pit_confidence"] = fb_entry.get("pit_confidence", "medium")
                             if fb_entry.get("is_out_lap"):
                                 entry["is_out_lap"] = True
                             if fb_entry.get("is_outlier"):
@@ -421,6 +427,12 @@ class F1RaceReplayWindow(arcade.Window):
                                 entry["pace_baseline_s"] = fb_entry["pace_baseline_s"]
                     try:
                         _, stream_data, _ = ffapi._extended_timing_data(session.api_path)
+                        required_stream_cols = {"Driver", "Time", "Position", "GapToLeader", "IntervalToPositionAhead"}
+                        missing_stream_cols = required_stream_cols.difference(stream_data.columns)
+                        if missing_stream_cols:
+                            raise KeyError(
+                                f"extended timing data missing columns: {sorted(missing_stream_cols)}"
+                            )
                         number_to_code = {}
                         code_to_number = {}
                         if (
@@ -464,7 +476,7 @@ class F1RaceReplayWindow(arcade.Window):
                                     pos_val = sess_lap_row.get("Position")
                                     pos_int = int(pos_val) if pd.notna(pos_val) else None
                                     official_pos_lookup[(str(sess_lap_row["Driver"]), int(sess_lap_row["LapNumber"]))] = pos_int
-                                except Exception:
+                                except (TypeError, ValueError):
                                     continue
 
                         def _parse_gap_to_leader(raw_value, row_position):
@@ -544,7 +556,7 @@ class F1RaceReplayWindow(arcade.Window):
                                 if target_position is None and pd.notna(matched_position):
                                     try:
                                         target_position = int(matched_position)
-                                    except Exception:
+                                    except (TypeError, ValueError):
                                         target_position = None
                                 if target_position is not None and not interval_quality_rows.empty:
                                     interval_quality_rows = interval_quality_rows[
@@ -587,7 +599,7 @@ class F1RaceReplayWindow(arcade.Window):
                                 if pd.notna(matched_position):
                                     try:
                                         lap_entry["official_stream_position"] = int(matched_position)
-                                    except Exception:
+                                    except (TypeError, ValueError):
                                         pass
                                 if interval_s is not None:
                                     lap_entry["official_interval_to_ahead_s"] = float(interval_s)
@@ -662,8 +674,8 @@ class F1RaceReplayWindow(arcade.Window):
                                 assigned_by_pos[pos] = assigned_gap_s
                                 item["entry"]["official_gap_to_leader_s"] = float(assigned_gap_s)
                                 item["entry"]["official_gap_source"] = source
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"Warning: official gap enrichment failed, using fallback gaps where needed: {e}")
                     try:
                         import pandas as pd
                         results_df = session.results
@@ -743,9 +755,12 @@ class F1RaceReplayWindow(arcade.Window):
                                     code_entries.append(terminal_entry)
 
                                 terminal_entry["is_terminal_lap"] = True
-                                terminal_entry["result_status"] = status_text or "Retired"
-                    except Exception:
-                        pass
+                                if classified_pos == "R":
+                                    terminal_entry["result_status"] = "Retired"
+                                else:
+                                    terminal_entry["result_status"] = status_text or "Retired"
+                    except Exception as e:
+                        print(f"Warning: result-status enrichment failed, continuing without terminal/result metadata: {e}")
                     return F1RaceReplayWindow._classify_lap_entries(result, official_data=True)
             except Exception as e:
                 print(f"Error parsing official lap times: {e}")
@@ -808,12 +823,13 @@ class F1RaceReplayWindow(arcade.Window):
             for i, entry in enumerate(entries):
                 next_entry = entries[i + 1] if i + 1 < len(entries) else None
                 entry.setdefault("source", "official" if official_data else "derived")
-                entry.setdefault("is_pit", False)
+                entry.setdefault("is_pit_entry", bool(entry.get("is_pit", False)))
+                entry.setdefault("is_pit_affected", bool(entry.get("is_pit_entry", False) or entry.get("is_pit", False)))
                 entry.setdefault("is_out_lap", False)
                 entry.setdefault("is_outlier", False)
                 entry.setdefault(
                     "pit_confidence",
-                    "official" if entry.get("is_pit") and entry.get("source") == "official" else "none",
+                    "official" if entry.get("is_pit_entry") and entry.get("source") == "official" else "none",
                 )
 
                 baseline_pool = clean_history[-5:]
@@ -830,7 +846,7 @@ class F1RaceReplayWindow(arcade.Window):
                     entry["gap_clock_s"] = None
                 if (
                     entry.get("source") != "official"
-                    and not entry.get("is_pit")
+                    and not entry.get("is_pit_affected")
                     and baseline is not None
                     and time_s > 0
                     and entry["lap"] > 1
@@ -857,20 +873,22 @@ class F1RaceReplayWindow(arcade.Window):
                     moderate_delta = (time_s - baseline) >= max(7.0, baseline * 0.08)
 
                     if severe_delta and (compound_change or age_reset):
-                        entry["is_pit"] = True
+                        entry["is_pit_affected"] = True
                         entry["pit_confidence"] = "high"
                     elif moderate_delta and age_reset:
-                        entry["is_pit"] = True
+                        entry["is_pit_affected"] = True
                         entry["pit_confidence"] = "medium"
                     elif severe_delta:
                         entry["is_outlier"] = True
 
-                if entry.get("is_pit") and next_entry and next_entry["lap"] == entry["lap"] + 1:
+                if entry.get("is_pit_entry") and next_entry and next_entry["lap"] == entry["lap"] + 1:
                     next_entry["is_out_lap"] = True
+
+                entry["is_pit"] = bool(entry.get("is_pit_affected"))
 
                 if (
                     time_s > 0
-                    and not entry.get("is_pit")
+                    and not entry.get("is_pit_affected")
                     and not entry.get("is_out_lap")
                     and not entry.get("is_outlier")
                 ):
@@ -1490,3 +1508,4 @@ class F1RaceReplayWindow(arcade.Window):
             print("Stopping telemetry stream server...")
             self.telemetry_stream.stop()
         super().close()
+
